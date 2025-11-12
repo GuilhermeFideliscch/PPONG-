@@ -68,9 +68,13 @@ int main() {
     if (clientSocket == INVALID_SOCKET) {
         error_handling("Erro ao aceitar a conexão");
     }
+    printf("Iniciando jogo...\n\n");
 
     int flag = 1;
     setsockopt(clientSocket, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(int));
+    
+    u_long mode = 1;
+    ioctlsocket(clientSocket, FIONBIO, &mode);
 
     float playerX = 10;
     float playerY = alturaTela / 2 - 50;
@@ -101,6 +105,11 @@ int main() {
     DadosCompartilhados dados;
     Mensagem msgEnviar, msgReceber;
     bool jogoIniciado = false;
+    
+    FILE *fileShared = fopen("pong_shared.dat", "r+b");
+    if (!fileShared) {
+        fileShared = fopen("pong_shared.dat", "w+b");
+    }
 
     while (!WindowShouldClose()) {
         if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) {
@@ -115,27 +124,16 @@ int main() {
 
         msgEnviar.playerY = player.y;
         msgEnviar.ativo = 1;
-        int bytesSent = send(clientSocket, (char*)&msgEnviar, sizeof(Mensagem), 0);
+        send(clientSocket, (char*)&msgEnviar, sizeof(Mensagem), 0);
 
-        fd_set readfds;
-        struct timeval timeout;
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 1000;
-        
-        FD_ZERO(&readfds);
-        FD_SET(clientSocket, &readfds);
-        
-        if (select(0, &readfds, NULL, NULL, &timeout) > 0) {
-            int bytesReceived = recv(clientSocket, (char*)&msgReceber, sizeof(Mensagem), 0);
-            if (bytesReceived > 0) {
-                oponente.y = msgReceber.playerY;
-            }
+        int bytesReceived = recv(clientSocket, (char*)&msgReceber, sizeof(Mensagem), 0);
+        if (bytesReceived > 0) {
+            oponente.y = msgReceber.playerY;
         }
 
-        FILE *fRead = fopen("pong_shared.dat", "rb");
-        if (fRead) {
-            fread(&dados, sizeof(DadosCompartilhados), 1, fRead);
-            fclose(fRead);
+        if (fileShared) {
+            fseek(fileShared, 0, SEEK_SET);
+            fread(&dados, sizeof(DadosCompartilhados), 1, fileShared);
         }
 
         if (!jogoIniciado && IsKeyPressed(KEY_ENTER)) {
@@ -158,14 +156,15 @@ int main() {
                 dados.bolaX = player.x + playerLargura + 1;
             }
 
-            if (CheckCollisionRecs(oponente, bolaRect) && dados.bolaVelocidadeX > 0) {
+            Rectangle oponenteAjustado = {oponente.x + larguraTela, oponente.y, 25, 100};
+            if (CheckCollisionRecs(oponenteAjustado, bolaRect) && dados.bolaVelocidadeX > 0) {
                 dados.bolaVelocidadeX *= -1;
-                dados.bolaX = oponente.x - 16;
+                dados.bolaX = oponenteAjustado.x - 16;
             }
 
-            if (dados.bolaX >= larguraTela) {
+            if (dados.bolaX >= larguraTela * 2) {
                 dados.placar1 += 1;
-                dados.bolaX = larguraTela / 2;
+                dados.bolaX = larguraTela;
                 dados.bolaY = alturaTela / 2;
                 dados.bolaVelocidadeX = 0;
                 dados.bolaVelocidadeY = 0;
@@ -173,7 +172,7 @@ int main() {
             }
             if (dados.bolaX <= 0) {
                 dados.placar2 += 1;
-                dados.bolaX = larguraTela / 2;
+                dados.bolaX = larguraTela;
                 dados.bolaY = alturaTela / 2;
                 dados.bolaVelocidadeX = 0;
                 dados.bolaVelocidadeY = 0;
@@ -184,17 +183,17 @@ int main() {
         if ((dados.placar1 >= 10 || dados.placar2 >= 10) && IsKeyPressed(KEY_ENTER)) {
             dados.placar1 = 0;
             dados.placar2 = 0;
-            dados.bolaX = larguraTela / 2;
+            dados.bolaX = larguraTela;
             dados.bolaY = alturaTela / 2;
             dados.bolaVelocidadeX = 0;
             dados.bolaVelocidadeY = 0;
             jogoIniciado = false;
         }
 
-        FILE *fWrite = fopen("pong_shared.dat", "wb");
-        if (fWrite) {
-            fwrite(&dados, sizeof(DadosCompartilhados), 1, fWrite);
-            fclose(fWrite);
+        if (fileShared) {
+            fseek(fileShared, 0, SEEK_SET);
+            fwrite(&dados, sizeof(DadosCompartilhados), 1, fileShared);
+            fflush(fileShared);
         }
 
         bola.x = dados.bolaX;
@@ -204,8 +203,10 @@ int main() {
         ClearBackground(BLACK);
 
         DrawRectangleRec(player, WHITE);
-        DrawRectangleRec(oponente, GRAY);
-        DrawRectangleRec(bola, WHITE);
+        
+        if (dados.bolaX <= larguraTela) {
+            DrawRectangleRec(bola, WHITE);
+        }
 
         DrawText(TextFormat("P1: %d", dados.placar1), 10, 10, 20, WHITE);
         DrawText(TextFormat("P2: %d", dados.placar2), larguraTela - 80, 10, 20, WHITE);
@@ -223,6 +224,7 @@ int main() {
         EndDrawing();
     }
 
+    if (fileShared) fclose(fileShared);
     closesocket(clientSocket);
     closesocket(serverSocket);
     WSACleanup();
