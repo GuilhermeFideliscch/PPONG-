@@ -166,8 +166,8 @@ int main() {
             WaitForSingleObject(hMutex, INFINITE);
             if (!jogoIniciado && shared->placar1 < 10 && shared->placar2 < 10) {
                 jogoIniciado = true;
-                shared->bolaVelocidadeX = 5.0f;
-                shared->bolaVelocidadeY = 5.0f;
+                shared->bolaVelocidadeX = 10.0f;
+                shared->bolaVelocidadeY = 10.0f;
                 printf("[SERVIDOR] Jogo iniciado!\n");
             } else if (shared->placar1 >= 10 || shared->placar2 >= 10) {
                 
@@ -303,3 +303,4 @@ int main() {
     CloseWindow();
     return 0;
 }
+
