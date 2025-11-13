@@ -15,7 +15,6 @@ extern int __stdcall GetAsyncKeyState(int vKey);
 
 #define VK_UP 0x26
 #define VK_DOWN 0x28
-#define VK_RETURN 0x0D
 
 typedef struct {
     float bolaX;
@@ -25,18 +24,38 @@ typedef struct {
     float player1Y; 
     float player2Y;
     int placar1;
-    int placar2;
+    int placar2;  
 } DadosCompartilhados;
 
 typedef struct {
-    float playerY;
-    int ativo;
+    char tipo[20];          
+    int placar1;
+    int placar2;
+    char mensagem[100];
 } Mensagem;
 
 void error_handling(char *message) {
     fprintf(stderr, "%s: %d\n", message, WSAGetLastError());
     WSACleanup();
     exit(1);
+}
+
+void enviarMensagem(SOCKET sock, Mensagem *msg) {
+    int enviados = send(sock, (char*)msg, sizeof(Mensagem), 0);
+    if (enviados == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK) {
+        fprintf(stderr, "Erro ao enviar mensagem\n");
+    }
+}
+
+int receberMensagem(SOCKET sock, Mensagem *msg) {
+    int recebidos = recv(sock, (char*)msg, sizeof(Mensagem), 0);
+    if (recebidos == SOCKET_ERROR) {
+        if (WSAGetLastError() == WSAEWOULDBLOCK) {
+            return 0;
+        }
+        return -1;
+    }
+    return recebidos;
 }
 
 int main() {
@@ -64,7 +83,7 @@ int main() {
     if (connect(clientSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
         error_handling("Erro ao conectar ao servidor");
     }
-    printf("Conectado ao servidor! Iniciando jogo...\n\n");
+    printf("Conectado ao servidor!\n\n");
 
     int flag = 1;
     setsockopt(clientSocket, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(int));
@@ -112,8 +131,10 @@ int main() {
         error_handling("CreateMutex falhou no cliente");
     }
 
+    Mensagem msgRecebida;
+
     while (!WindowShouldClose()) {
-        // INPUT P2: Seta Cima/Baixo com GetAsyncKeyState (sem precisar clicar)
+        
         if (GetAsyncKeyState(VK_UP) & 0x8000) {
             if (playerY > 0) {
                 playerY -= playerVelocidade;
@@ -125,34 +146,45 @@ int main() {
             }
         }
 
-        
+       
         WaitForSingleObject(hMutex, INFINITE);
         shared->player2Y = playerY;
+        memcpy(&dados, shared, sizeof(DadosCompartilhados));
         ReleaseMutex(hMutex);
 
         
-        WaitForSingleObject(hMutex, INFINITE);
-        memcpy(&dados, shared, sizeof(DadosCompartilhados));
-        ReleaseMutex(hMutex);
- 
+        if (receberMensagem(clientSocket, &msgRecebida) > 0) {
+            if (strcmp(msgRecebida.tipo, "PONTO") == 0) {
+                printf("[CLIENTE] %s | Placar: %d x %d\n", msgRecebida.mensagem, 
+                       msgRecebida.placar1, msgRecebida.placar2);
+            }
+            else if (strcmp(msgRecebida.tipo, "REINICIO") == 0) {
+                printf("[CLIENTE] Jogo reiniciado!\n");
+            }
+            else if (strcmp(msgRecebida.tipo, "DESCONECTADO") == 0) {
+                printf("[CLIENTE] Servidor desconectado!\n");
+                break;
+            }
+        }
+
         
         BeginDrawing();
         ClearBackground(BLACK);
- 
-       
-        DrawRectangle(playerX, playerY, playerLargura, playerAltura, WHITE);
+
         
+        DrawRectangle(playerX, playerY, playerLargura, playerAltura, WHITE);
+
         
         if (dados.bolaX >= larguraTela) {
-           
             float bolaLocalX = dados.bolaX - larguraTela;
             DrawRectangle(bolaLocalX, dados.bolaY, 15, 15, WHITE);
         }
- 
-        // Placar (branco)
+
+        
         DrawText(TextFormat("P1: %d", dados.placar1), 10, 10, 20, WHITE);
         DrawText(TextFormat("P2: %d", dados.placar2), larguraTela - 80, 10, 20, WHITE);
 
+        
         if (dados.placar1 >= 10 || dados.placar2 >= 10) {
             const char *msg = (dados.placar1 >= 10) ? "Player 1 Venceu!" : "Player 2 Venceu!";
             DrawText(msg, larguraTela/2 - MeasureText(msg, 30)/2, alturaTela/2 - 40, 30, WHITE);
