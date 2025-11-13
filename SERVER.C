@@ -6,15 +6,24 @@
 #define NOUSER
 #define WIN32_LEAN_AND_MEAN
 
-#include <winsock2.h>
-
 #include "raylib.h"
+
+#include <winsock2.h>
+#include <windows.h>
+
+extern int __stdcall GetAsyncKeyState(int vKey);
+
+#define VK_UP 0x26
+#define VK_DOWN 0x28
+#define VK_RETURN 0x0D
 
 typedef struct {
     float bolaX;
     float bolaY;
     float bolaVelocidadeX;
     float bolaVelocidadeY;
+    float player1Y; 
+    float player2Y;
     int placar1;
     int placar2;
 } DadosCompartilhados;
@@ -34,7 +43,8 @@ int main() {
     const int larguraTela = 640;
     const int alturaTela = 720;
 
-    printf("=== SERVIDOR PONG - Player 1 ===\n");
+    printf("=== SERVIDOR PONG - Player 1 (Esquerda) ===\n");
+    printf("Controle: W/S\n");
     
     WSADATA winsocketsDados;
     if (WSAStartup(MAKEWORD(2, 2), &winsocketsDados) != 0) {
@@ -68,7 +78,7 @@ int main() {
     if (clientSocket == INVALID_SOCKET) {
         error_handling("Erro ao aceitar a conexão");
     }
-    printf("Iniciando jogo...\n\n");
+    printf("Player 2 conectado! Iniciando jogo...\n\n");
 
     int flag = 1;
     setsockopt(clientSocket, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(int));
@@ -81,133 +91,144 @@ int main() {
     float playerLargura = 25;
     float playerAltura = 100;
     float playerVelocidade = 10;
-    Rectangle player = {playerX, playerY, playerLargura, playerAltura};
 
-    float oponenteX = larguraTela - 35;
-    float oponenteY = alturaTela / 2 - 50;
-    Rectangle oponente = {oponenteX, oponenteY, playerLargura, playerAltura};
-
-    Rectangle bola = {larguraTela / 2, alturaTela / 2, 15, 15};
-
-    FILE *f = fopen("pong_shared.dat", "wb");
-    if (f) {
-        DadosCompartilhados dados = {
-            larguraTela / 2.0f, alturaTela / 2.0f,
-            0.0f, 0.0f, 0, 0
-        };
-        fwrite(&dados, sizeof(DadosCompartilhados), 1, f);
-        fclose(f);
+    HANDLE hMap = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(DadosCompartilhados), "Local\\PongShared");
+    if (!hMap) {
+        error_handling("CreateFileMapping falhou");
+    }
+    DadosCompartilhados *shared = (DadosCompartilhados*)MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+    if (!shared) {
+        CloseHandle(hMap);
+        error_handling("MapViewOfFile falhou");
     }
 
-    InitWindow(larguraTela, alturaTela, "PONG - Player 1 (Servidor)");
+    HANDLE hMutex = CreateMutexA(NULL, FALSE, "Local\\PongSharedMutex");
+    if (!hMutex) {
+        UnmapViewOfFile(shared);
+        CloseHandle(hMap);
+        error_handling("CreateMutex falhou");
+    }
+
+    DadosCompartilhados init = {
+        larguraTela, alturaTela / 2.0f,
+        5.0f, 5.0f,
+        playerY,
+        alturaTela / 2 - 50,
+        0, 0
+    };
+    WaitForSingleObject(hMutex, INFINITE);
+    memcpy(shared, &init, sizeof(DadosCompartilhados));
+    ReleaseMutex(hMutex);
+
+    InitWindow(larguraTela, alturaTela, "PONG - Player 1 (Servidor) - Esquerda");
     SetTargetFPS(60);
 
     DadosCompartilhados dados;
-    Mensagem msgEnviar, msgReceber;
     bool jogoIniciado = false;
-    
-    FILE *fileShared = fopen("pong_shared.dat", "r+b");
-    if (!fileShared) {
-        fileShared = fopen("pong_shared.dat", "w+b");
-    }
 
     while (!WindowShouldClose()) {
-        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) {
-            player.y -= playerVelocidade;
+        
+        if (GetAsyncKeyState('W') & 0x8000) {
+            if (playerY > 0) {
+                playerY -= playerVelocidade;
+            }
         }
-        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) {
-            player.y += playerVelocidade;
-        }
-
-        if (player.y < 0) player.y = 0;
-        if (player.y + playerAltura > alturaTela) player.y = alturaTela - playerAltura;
-
-        msgEnviar.playerY = player.y;
-        msgEnviar.ativo = 1;
-        send(clientSocket, (char*)&msgEnviar, sizeof(Mensagem), 0);
-
-        int bytesReceived = recv(clientSocket, (char*)&msgReceber, sizeof(Mensagem), 0);
-        if (bytesReceived > 0) {
-            oponente.y = msgReceber.playerY;
+        if (GetAsyncKeyState('S') & 0x8000) {
+            if (playerY + playerAltura < alturaTela) {
+                playerY += playerVelocidade;
+            }
         }
 
-        if (fileShared) {
-            fseek(fileShared, 0, SEEK_SET);
-            fread(&dados, sizeof(DadosCompartilhados), 1, fileShared);
+        if (GetAsyncKeyState(VK_RETURN) & 0x8000) {
+            WaitForSingleObject(hMutex, INFINITE);
+            if (!jogoIniciado && shared->placar1 < 10 && shared->placar2 < 10) {
+                jogoIniciado = true;
+                shared->bolaVelocidadeX = 10;
+                shared->bolaVelocidadeY = 10;
+            } else if (shared->placar1 >= 10 || shared->placar2 >= 10) {
+                shared->placar1 = 0;
+                shared->placar2 = 0;
+                shared->bolaX = larguraTela / 2.0f;
+                shared->bolaY = alturaTela / 2.0f;
+                shared->bolaVelocidadeX = 0;
+                shared->bolaVelocidadeY = 0;
+                jogoIniciado = false;
+            }
+            ReleaseMutex(hMutex);
+            Sleep(200);
         }
 
-        if (!jogoIniciado && IsKeyPressed(KEY_ENTER)) {
-            jogoIniciado = true;
-            dados.bolaVelocidadeX = 5;
-            dados.bolaVelocidadeY = 5;
-        }
+        
+        WaitForSingleObject(hMutex, INFINITE);
+        shared->player1Y = playerY;
+        ReleaseMutex(hMutex);
 
+        
         if (jogoIniciado) {
-            dados.bolaX += dados.bolaVelocidadeX;
-            dados.bolaY += dados.bolaVelocidadeY;
+            WaitForSingleObject(hMutex, INFINITE);
 
-            if (dados.bolaY >= alturaTela || dados.bolaY <= 0) {
-                dados.bolaVelocidadeY *= -1;
+            shared->bolaX += shared->bolaVelocidadeX;
+            shared->bolaY += shared->bolaVelocidadeY;
+
+            if (shared->bolaY <= 0 || shared->bolaY >= alturaTela - 15) {
+                shared->bolaVelocidadeY *= -1;
             }
 
-            Rectangle bolaRect = {dados.bolaX, dados.bolaY, 15, 15};
-            if (CheckCollisionRecs(player, bolaRect) && dados.bolaVelocidadeX < 0) {
-                dados.bolaVelocidadeX *= -1;
-                dados.bolaX = player.x + playerLargura + 1;
+            
+            Rectangle player1Rect = {playerX, playerY, playerLargura, playerAltura};
+            Rectangle bolaRect = {shared->bolaX, shared->bolaY, 15, 15};
+            if (CheckCollisionRecs(player1Rect, bolaRect) && shared->bolaVelocidadeX < 0) {
+                shared->bolaVelocidadeX *= -1;
+                shared->bolaX = playerX + playerLargura + 1;
             }
 
-            Rectangle oponenteAjustado = {oponente.x + larguraTela, oponente.y, 25, 100};
-            if (CheckCollisionRecs(oponenteAjustado, bolaRect) && dados.bolaVelocidadeX > 0) {
-                dados.bolaVelocidadeX *= -1;
-                dados.bolaX = oponenteAjustado.x - 16;
+           
+            float p2GlobalX = larguraTela + (larguraTela - 35); 
+            Rectangle player2Rect = { p2GlobalX, shared->player2Y, playerLargura, playerAltura };
+            if (CheckCollisionRecs(player2Rect, bolaRect) && shared->bolaVelocidadeX > 0) {
+                shared->bolaVelocidadeX *= -1;
+                shared->bolaX = player2Rect.x - 16;
             }
 
-            if (dados.bolaX >= larguraTela * 2) {
-                dados.placar1 += 1;
-                dados.bolaX = larguraTela;
-                dados.bolaY = alturaTela / 2;
-                dados.bolaVelocidadeX = 0;
-                dados.bolaVelocidadeY = 0;
+            
+            if (shared->bolaX >= larguraTela * 2) {
+                shared->placar1 += 1;
+                shared->bolaX = larguraTela; 
+                shared->bolaY = alturaTela / 2.0f;
+                shared->bolaVelocidadeX = 0;
+                shared->bolaVelocidadeY = 0;
                 jogoIniciado = false;
             }
-            if (dados.bolaX <= 0) {
-                dados.placar2 += 1;
-                dados.bolaX = larguraTela;
-                dados.bolaY = alturaTela / 2;
-                dados.bolaVelocidadeX = 0;
-                dados.bolaVelocidadeY = 0;
+            if (shared->bolaX <= 0) {
+                shared->placar2 += 1;
+                shared->bolaX = larguraTela; 
+                shared->bolaY = alturaTela / 2.0f;
+                shared->bolaVelocidadeX = 0;
+                shared->bolaVelocidadeY = 0;
                 jogoIniciado = false;
             }
+
+            ReleaseMutex(hMutex);
         }
 
-        if ((dados.placar1 >= 10 || dados.placar2 >= 10) && IsKeyPressed(KEY_ENTER)) {
-            dados.placar1 = 0;
-            dados.placar2 = 0;
-            dados.bolaX = larguraTela;
-            dados.bolaY = alturaTela / 2;
-            dados.bolaVelocidadeX = 0;
-            dados.bolaVelocidadeY = 0;
-            jogoIniciado = false;
-        }
+        
+        WaitForSingleObject(hMutex, INFINITE);
+        memcpy(&dados, shared, sizeof(DadosCompartilhados));
+        ReleaseMutex(hMutex);
 
-        if (fileShared) {
-            fseek(fileShared, 0, SEEK_SET);
-            fwrite(&dados, sizeof(DadosCompartilhados), 1, fileShared);
-            fflush(fileShared);
-        }
-
-        bola.x = dados.bolaX;
-        bola.y = dados.bolaY;
-
+       
         BeginDrawing();
         ClearBackground(BLACK);
 
-        DrawRectangleRec(player, WHITE);
         
-        if (dados.bolaX <= larguraTela) {
-            DrawRectangleRec(bola, WHITE);
+        DrawRectangle(playerX, playerY, playerLargura, playerAltura, WHITE);
+        
+        
+        if (dados.bolaX < larguraTela) {
+            DrawRectangle(dados.bolaX, dados.bolaY, 15, 15, WHITE);
         }
 
+        
         DrawText(TextFormat("P1: %d", dados.placar1), 10, 10, 20, WHITE);
         DrawText(TextFormat("P2: %d", dados.placar2), larguraTela - 80, 10, 20, WHITE);
 
@@ -224,7 +245,10 @@ int main() {
         EndDrawing();
     }
 
-    if (fileShared) fclose(fileShared);
+    UnmapViewOfFile(shared);
+    CloseHandle(hMap);
+    CloseHandle(hMutex);
+
     closesocket(clientSocket);
     closesocket(serverSocket);
     WSACleanup();
