@@ -29,13 +29,11 @@ Framework C para desenvolvimento de jogos 2D e 3D, responsável por toda a parte
 
 🚀 Execução
 
-Compile os códigos do servidor e do cliente
+Baixe o Server.exe e o Client.exe, e execute-os da mesma forma.
 
-Inicie o servidor primeiro.
+caso queira compilar e/ou ver os codigos.
 
-Depois, inicie o cliente em outra janela.
-
-Observe a troca de dados e veja a mágica acontecer.
+veja este tutorial de como ajustar o raylib para a sua maquina: https://youtu.be/-F6THkPkF2I?si=MkOPns4eJw27FFlc
 
 codigo de compilacao server: gcc SERVER.c -o server.exe -IC:\raylib\raylib\src -LC:\raylib\raylib\src -lraylib -lws2_32 -lopengl32 -lgdi32 -lwinmm
 codigo de compilacao client: gcc CLIENT.c -o client.exe -IC:\raylib\raylib\src -LC:\raylib\raylib\src -lraylib -lws2_32 -lopengl32 -lgdi32 -lwinmm
